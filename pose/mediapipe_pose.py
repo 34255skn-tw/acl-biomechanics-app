@@ -1,5 +1,6 @@
 import mediapipe as mp
-mp_pose = mp.solutions.pose
+# เปลี่ยนวิธีดึงข้อมูลย่อยเป็นแบบเรียกตรง เพื่อรองรับ MediaPipe ทุกเวอร์ชัน
+from mediapipe.python.solutions import pose as mp_pose
 
 def create_pose():
     return mp_pose.Pose(
