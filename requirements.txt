@@ -1,7 +1,5 @@
 opencv-python-headless
-mediapipe==0.10.14
+mediapipe
 pandas
 fpdf2
 matplotlib
-rich==13.7.1
-pygments==2.17.2
