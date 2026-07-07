@@ -229,6 +229,14 @@ if run:
     
     if source_type == "เปิดกล้องสด (Webcam/Live Phone)":
         cap = cv2.VideoCapture(0)
+        if not cap.isOpened():
+            st.error(
+                "⚠️ ไม่พบกล้องบนเซิร์ฟเวอร์ โหมด 'เปิดกล้องสด' ใช้งานได้เฉพาะตอนรันแอปบนเครื่องตัวเอง "
+                "(local machine) เท่านั้น เพราะเซิร์ฟเวอร์บน Streamlit Cloud ไม่มีฮาร์ดแวร์กล้องให้เปิด\n\n"
+                "กรุณาเลือก 'ถ่ายวิดีโอ หรือ อัปโหลดไฟล์' แทน (บนมือถือ ปุ่มนี้จะเปิดกล้องมือถือให้ถ่ายได้โดยตรง)"
+            )
+            cap = None
+            run = False
     elif source_type == "ถ่ายวิดีโอ หรือ อัปโหลดไฟล์":
         if video_file is not None:
             tfile = tempfile.NamedTemporaryFile(delete=False)
