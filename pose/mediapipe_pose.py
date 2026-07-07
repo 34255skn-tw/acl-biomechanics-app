@@ -1,9 +1,8 @@
 import mediapipe as mp
-# เปลี่ยนวิธีดึงข้อมูลย่อยเป็นแบบเรียกตรง เพื่อรองรับ MediaPipe ทุกเวอร์ชัน
-from mediapipe.python.solutions import pose as mp_pose
 
 def create_pose():
-    return mp_pose.Pose(
+    # เรียกจากตัวฐานรากตรงๆ โครงสร้างนี้รองรับ MediaPipe เวอร์ชันใหม่บนคลาวด์ 100%
+    return mp.solutions.pose.Pose(
         static_image_mode=False,
         model_complexity=1,
         smooth_landmarks=True,
