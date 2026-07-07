@@ -1,5 +1,0 @@
-opencv-python-headless
-mediapipe==0.10.14
-pandas
-fpdf2
-matplotlib
