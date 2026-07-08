@@ -2,11 +2,15 @@ import streamlit as st
 import cv2
 import mediapipe as mp
 import time
+import threading
 import pandas as pd
 import tempfile
 import os
+import av
 import matplotlib.pyplot as plt
 from fpdf import FPDF
+from streamlit_webrtc import webrtc_streamer, WebRtcMode, RTCConfiguration, VideoProcessorBase
+
 from pose.mediapipe_pose import create_pose
 from pose.landmarks import get_pose_points
 from pose.drawing import draw_leg
@@ -75,17 +79,17 @@ run = st.checkbox("▶️ Start Analysis / เปิดกล้องวิเ�
 # ====================================================================
 def generate_pdf_report(df_history, age, gender, weight, height):
     pdf = FPDF()
-    
+
     # ---------------------------------------------------------
     # หน้าที่ 1: ข้อมูลผู้ทดสอบ + ตารางสรุปพารามิเตอร์สูงสุด
     # ---------------------------------------------------------
     pdf.add_page()
-    
+
     # Header
     pdf.set_font("Arial", "B", 20)
     pdf.cell(0, 10, "ACL Biomechanics Report", ln=True, align="C")
     pdf.ln(10)
-    
+
     # Athlete Profile
     pdf.set_font("Arial", "B", 12)
     pdf.cell(0, 10, "Athlete Profile:", ln=True)
@@ -93,15 +97,15 @@ def generate_pdf_report(df_history, age, gender, weight, height):
     pdf.cell(0, 8, f"Age: {age} | Gender: {gender}", ln=True)
     pdf.cell(0, 8, f"Height: {height} cm | Weight: {weight} kg", ln=True)
     pdf.ln(5)
-    
+
     if not df_history.empty:
         max_risk = df_history["Risk"].max()
         avg_risk = df_history["Risk"].mean()
-        
-        peak_theta = df_history["Left Knee"].max() 
+
+        peak_theta = df_history["Left Knee"].max()
         peak_omega = df_history["Velocity"].max()
         peak_alpha = df_history["Acceleration"].max()
-        
+
         status = "Low" if max_risk < 30 else "Moderate" if max_risk < 60 else "High"
 
         pdf.set_font("Arial", "B", 12)
@@ -116,20 +120,20 @@ def generate_pdf_report(df_history, age, gender, weight, height):
         pdf.cell(50, 10, "Variables", border=1, align="C")
         pdf.cell(70, 10, "Peak Values Captured", border=1, align="C")
         pdf.cell(60, 10, "Unit", border=1, align="C", ln=True)
-        
+
         pdf.set_font("Arial", "", 11)
         pdf.cell(50, 10, "Knee Angle (theta)", border=1, align="C")
         pdf.cell(70, 10, f"{peak_theta:.1f}", border=1, align="C")
         pdf.cell(60, 10, "degrees (deg)", border=1, align="C", ln=True)
-        
+
         pdf.cell(50, 10, "Angular Velocity (omega)", border=1, align="C")
         pdf.cell(70, 10, f"{peak_omega:.1f}", border=1, align="C")
         pdf.cell(60, 10, "deg / s", border=1, align="C", ln=True)
-        
+
         pdf.cell(50, 10, "Angular Accel (alpha)", border=1, align="C")
         pdf.cell(70, 10, f"{peak_alpha:.1f}", border=1, align="C")
         pdf.cell(60, 10, "deg / s^2", border=1, align="C", ln=True)
-        
+
         pdf.cell(50, 10, "Risk Status", border=1, align="C")
         pdf.set_font("Arial", "B", 11)
         pdf.cell(70, 10, f"{status} Risk", border=1, align="C")
@@ -140,14 +144,14 @@ def generate_pdf_report(df_history, age, gender, weight, height):
         # หน้าที่ 2: แสดงกราฟวิเคราะห์ข้อมูลทั้งหมด (พล็อตแบบ Subplots แนวตั้ง)
         # ---------------------------------------------------------
         pdf.add_page()
-        
+
         pdf.set_font("Arial", "B", 14)
         pdf.cell(0, 10, "Kinematics & Analytics Visualization", ln=True, align="L")
         pdf.ln(5)
 
         # สร้างรูปภาพขนาดพอดีที่มีกราฟซ้อนกันเป็น 2 ชั้น (บน-ล่าง)
         fig, (ax1, ax2) = plt.subplots(2, 1, figsize=(7.5, 7.5))
-        
+
         # กราฟย่อยที่ 1: มุมข้อเข่าและความเสี่ยง (Knee Angles & Risk)
         ax1.plot(df_history["Left Knee"], label="Left Knee Angle", color="blue", linewidth=1.5)
         ax1.plot(df_history["Right Knee"], label="Right Knee Angle", color="green", linewidth=1.5)
@@ -156,7 +160,7 @@ def generate_pdf_report(df_history, age, gender, weight, height):
         ax1.set_ylabel("Degrees / Percentage", fontsize=9)
         ax1.grid(True, linestyle=":", alpha=0.6)
         ax1.legend(loc="upper left", fontsize=8)
-        
+
         # กราฟย่อยที่ 2 (อันใหม่): ความเร็วและความเร่งเชิงมุม (Angular Velocity & Acceleration)
         ax2.plot(df_history["Velocity"], label="Velocity (omega)", color="darkorange", linewidth=1.5)
         ax2.plot(df_history["Acceleration"], label="Acceleration (alpha)", color="purple", linestyle="-.", linewidth=1.2)
@@ -165,9 +169,9 @@ def generate_pdf_report(df_history, age, gender, weight, height):
         ax2.set_ylabel("Velocity (deg/s) / Accel (deg/s²)", fontsize=9)
         ax2.grid(True, linestyle=":", alpha=0.6)
         ax2.legend(loc="upper left", fontsize=8)
-        
+
         plt.tight_layout()
-        
+
         # เซฟกราฟและนำมาแปะลงในหน้าคู่ที่ 2 ของ PDF
         with tempfile.NamedTemporaryFile(suffix=".png", delete=False) as tmp_img:
             plt.savefig(tmp_img.name, dpi=180)
@@ -176,7 +180,7 @@ def generate_pdf_report(df_history, age, gender, weight, height):
             pdf.image(tmp_img.name, x=10, y=25, w=190)
             try: os.unlink(tmp_img.name)
             except: pass
-                
+
     return bytes(pdf.output())
 
 save_data = st.button("💾 Save Session & Generate PDF Report")
@@ -220,24 +224,180 @@ frame_placeholder = st.empty()
 chart_placeholder = st.empty()
 
 # ====================================================================
-# MAIN PROCESSING LOOP
+# LIVE WEBCAM: mediapipe processing running in a background WebRTC
+# video thread. State is shared with the main script thread through
+# a lock-protected dict, since Streamlit session_state is not safe
+# to write to from inside the WebRTC callback thread.
+# ====================================================================
+RTC_CONFIGURATION = RTCConfiguration({
+    "iceServers": [{"urls": ["stun:stun.l.google.com:19302"]}]
+})
+
+class PoseVideoProcessor(VideoProcessorBase):
+    def __init__(self):
+        self.pose = create_pose()
+        self.mp_pose = mp.solutions.pose
+        self.lock = threading.Lock()
+        self.latest = None
+
+        self.age = 18
+        self.gender = "Male"
+
+        self.prev_left_angle = None
+        self.prev_velocity = 0
+        self.prev_time = None
+
+        self.left_angle_history = []
+        self.right_angle_history = []
+        self.velocity_history = []
+        self.acceleration_history = []
+        self.risk_history = []
+
+    def recv(self, frame: av.VideoFrame) -> av.VideoFrame:
+        img = frame.to_ndarray(format="bgr24")
+
+        now = time.time()
+        dt = (now - self.prev_time) if self.prev_time else (1.0 / 30.0)
+        self.prev_time = now
+
+        rgb = cv2.cvtColor(img, cv2.COLOR_BGR2RGB)
+        results = self.pose.process(rgb)
+
+        if results.pose_landmarks:
+            landmarks = results.pose_landmarks.landmark
+            points = get_pose_points(landmarks, self.mp_pose)
+
+            left_hip, left_knee, left_ankle = points["left_hip"], points["left_knee"], points["left_ankle"]
+            right_hip, right_knee, right_ankle = points["right_hip"], points["right_knee"], points["right_ankle"]
+
+            left_angle = calculate_angle(left_hip, left_knee, left_ankle)
+            right_angle = calculate_angle(right_hip, right_knee, right_ankle)
+
+            self.left_angle_history.append(left_angle); self.right_angle_history.append(right_angle)
+            if len(self.left_angle_history) > 5:
+                self.left_angle_history.pop(0); self.right_angle_history.pop(0)
+            left_angle = sum(self.left_angle_history) / len(self.left_angle_history)
+            right_angle = sum(self.right_angle_history) / len(self.right_angle_history)
+
+            asymmetry = calculate_asymmetry(left_angle, right_angle)
+            left_valgus = calculate_knee_valgus(left_hip, left_knee, left_ankle)
+            right_valgus = calculate_knee_valgus(right_hip, right_knee, right_ankle)
+
+            if self.prev_left_angle is not None:
+                raw_velocity = calculate_velocity(left_angle, self.prev_left_angle, dt)
+                raw_acceleration = calculate_acceleration(raw_velocity, self.prev_velocity, dt)
+            else:
+                raw_velocity, raw_acceleration = 0, 0
+
+            self.prev_left_angle = left_angle
+            self.prev_velocity = raw_velocity
+
+            self.velocity_history.append(raw_velocity); self.acceleration_history.append(raw_acceleration)
+            if len(self.velocity_history) > 5:
+                self.velocity_history.pop(0); self.acceleration_history.pop(0)
+            velocity = sum(self.velocity_history) / len(self.velocity_history)
+            acceleration = sum(self.acceleration_history) / len(self.acceleration_history)
+
+            raw_risk = acl_risk_score(left_angle, right_angle, asymmetry, left_valgus, right_valgus, velocity, acceleration, self.age, self.gender)
+
+            avg_angle = (left_angle + right_angle) / 2
+            if avg_angle > 165 and abs(velocity) < 50:
+                risk = 0
+            else:
+                risk = raw_risk
+
+            self.risk_history.append(risk)
+            if len(self.risk_history) > 8:
+                self.risk_history.pop(0)
+            risk = round(sum(self.risk_history) / len(self.risk_history))
+
+            status = "LOW" if risk < 30 else "MODERATE" if risk < 60 else "HIGH"
+
+            draw_leg(img, left_hip, left_knee, left_ankle)
+            draw_leg(img, right_hip, right_knee, right_ankle)
+            cv2.putText(img, f"Risk: {risk}%", (20, 40), cv2.FONT_HERSHEY_SIMPLEX, 1, (0, 0, 255), 2)
+            cv2.putText(img, status, (20, 80), cv2.FONT_HERSHEY_SIMPLEX, 1, (0, 255, 255), 2)
+
+            with self.lock:
+                self.latest = {
+                    "Timestamp": now,
+                    "Left Knee": left_angle,
+                    "Right Knee": right_angle,
+                    "Asymmetry": asymmetry,
+                    "Velocity": velocity,
+                    "Acceleration": acceleration,
+                    "Left Valgus": left_valgus,
+                    "Right Valgus": right_valgus,
+                    "Risk": risk,
+                }
+
+        return av.VideoFrame.from_ndarray(img, format="bgr24")
+
+
+def render_dashboard(m):
+    left_metric.metric("Left Knee", f"{m['Left Knee']:.1f}°")
+    right_metric.metric("Right Knee", f"{m['Right Knee']:.1f}°")
+    risk_metric.metric("ACL Risk", f"{m['Risk']}%")
+    asymmetry_metric.metric("Asymmetry", f"{m['Asymmetry']:.1f}%")
+    velocity_metric.metric("Velocity", f"{m['Velocity']:.1f}")
+    acceleration_metric.metric("Acceleration", f"{m['Acceleration']:.1f}")
+    left_valgus_metric.metric("L Valgus", f"{m['Left Valgus']:.1f}")
+    right_valgus_metric.metric("R Valgus", f"{m['Right Valgus']:.1f}")
+
+    st.session_state.logger.add_record(m["Timestamp"], m["Left Knee"], m["Right Knee"], m["Asymmetry"], m["Velocity"], m["Risk"])
+
+    st.session_state.history_data.append({
+        "Left Knee": m["Left Knee"],
+        "Right Knee": m["Right Knee"],
+        "Velocity": m["Velocity"],
+        "Acceleration": m["Acceleration"],
+        "Risk": m["Risk"],
+    })
+
+    df_chart = pd.DataFrame(st.session_state.history_data[-100:])
+    if not df_chart.empty and all(col in df_chart.columns for col in ["Left Knee", "Right Knee", "Risk"]):
+        chart_placeholder.line_chart(df_chart[["Left Knee", "Right Knee", "Risk"]])
+
+
+# ====================================================================
+# MAIN PROCESSING
 # ====================================================================
 if run:
-    cap = None
-    tfile = None
-    fps = 30.0
-    
     if source_type == "เปิดกล้องสด (Webcam/Live Phone)":
-        cap = cv2.VideoCapture(0)
-        if not cap.isOpened():
-            st.error(
-                "⚠️ ไม่พบกล้องบนเซิร์ฟเวอร์ โหมด 'เปิดกล้องสด' ใช้งานได้เฉพาะตอนรันแอปบนเครื่องตัวเอง "
-                "(local machine) เท่านั้น เพราะเซิร์ฟเวอร์บน Streamlit Cloud ไม่มีฮาร์ดแวร์กล้องให้เปิด\n\n"
-                "กรุณาเลือก 'ถ่ายวิดีโอ หรือ อัปโหลดไฟล์' แทน (บนมือถือ ปุ่มนี้จะเปิดกล้องมือถือให้ถ่ายได้โดยตรง)"
-            )
-            cap = None
-            run = False
+        st.info("📷 กดปุ่ม START ด้านล่างเพื่อขออนุญาตใช้กล้องจากเบราว์เซอร์ (รองรับทั้งคอมและมือถือ)")
+
+        webrtc_ctx = webrtc_streamer(
+            key="acl-live-analysis",
+            mode=WebRtcMode.SENDRECV,
+            rtc_configuration=RTC_CONFIGURATION,
+            video_processor_factory=PoseVideoProcessor,
+            media_stream_constraints={"video": {"facingMode": "environment"}, "audio": False},
+            async_processing=True,
+        )
+
+        if webrtc_ctx.video_processor:
+            webrtc_ctx.video_processor.age = age
+            webrtc_ctx.video_processor.gender = gender
+
+            st.session_state.history_data = []
+            st.session_state.logger = SessionLogger()
+
+            last_seen_ts = None
+            while webrtc_ctx.state.playing:
+                with webrtc_ctx.video_processor.lock:
+                    metrics = dict(webrtc_ctx.video_processor.latest) if webrtc_ctx.video_processor.latest else None
+
+                if metrics and metrics["Timestamp"] != last_seen_ts:
+                    last_seen_ts = metrics["Timestamp"]
+                    render_dashboard(metrics)
+
+                time.sleep(0.1)
+
     elif source_type == "ถ่ายวิดีโอ หรือ อัปโหลดไฟล์":
+        cap = None
+        tfile = None
+        fps = 30.0
+
         if video_file is not None:
             tfile = tempfile.NamedTemporaryFile(delete=False)
             tfile.write(video_file.read())
@@ -247,110 +407,109 @@ if run:
                 fps = video_fps
         else:
             st.warning("Please upload or record a video first.")
-            run = False
 
-    if cap is not None:
-        pose = create_pose()
-        mp_pose = mp.solutions.pose
-        
-        prev_left_angle = None
-        prev_velocity = 0
-        st.session_state.history_data = []
-        
-        risk_history = []
-        left_angle_history = []
-        right_angle_history = []
-        velocity_history = []
-        acceleration_history = []
+        if cap is not None:
+            pose = create_pose()
+            mp_pose = mp.solutions.pose
 
-        dt = 1.0 / fps
+            prev_left_angle = None
+            prev_velocity = 0
+            st.session_state.history_data = []
 
-        while cap.isOpened():
-            success, frame = cap.read()
-            if not success:
-                break
-                
-            rgb = cv2.cvtColor(frame, cv2.COLOR_BGR2RGB)
-            results = pose.process(rgb)
-            
-            if results.pose_landmarks:
-                landmarks = results.pose_landmarks.landmark
-                points = get_pose_points(landmarks, mp_pose)
-                
-                left_hip, left_knee, left_ankle = points["left_hip"], points["left_knee"], points["left_ankle"]
-                right_hip, right_knee, right_ankle = points["right_hip"], points["right_knee"], points["right_ankle"]
-                
-                left_angle = calculate_angle(left_hip, left_knee, left_ankle)
-                right_angle = calculate_angle(right_hip, right_knee, right_ankle)
-                
-                left_angle_history.append(left_angle); right_angle_history.append(right_angle)
-                if len(left_angle_history) > 5: left_angle_history.pop(0); right_angle_history.pop(0)
-                left_angle = sum(left_angle_history) / len(left_angle_history)
-                right_angle = sum(right_angle_history) / len(right_angle_history)
-                
-                asymmetry = calculate_asymmetry(left_angle, right_angle)
-                left_valgus = calculate_knee_valgus(left_hip, left_knee, left_ankle)
-                right_valgus = calculate_knee_valgus(right_hip, right_knee, right_ankle)
-                
-                if prev_left_angle is not None:
-                    raw_velocity = calculate_velocity(left_angle, prev_left_angle, dt)
-                    raw_acceleration = calculate_acceleration(raw_velocity, prev_velocity, dt)
-                else:
-                    raw_velocity, raw_acceleration = 0, 0
-                    
-                prev_left_angle = left_angle
-                prev_velocity = raw_velocity
-                
-                velocity_history.append(raw_velocity); acceleration_history.append(raw_acceleration)
-                if len(velocity_history) > 5: velocity_history.pop(0); acceleration_history.pop(0)
-                velocity = sum(velocity_history) / len(velocity_history)
-                acceleration = sum(acceleration_history) / len(acceleration_history)
-                
-                raw_risk = acl_risk_score(left_angle, right_angle, asymmetry, left_valgus, right_valgus, velocity, acceleration, age, gender)
-                
-                avg_angle = (left_angle + right_angle) / 2
-                if avg_angle > 165 and abs(velocity) < 50:
-                    risk = 0
-                else:
-                    risk = raw_risk
-                
-                risk_history.append(risk)
-                if len(risk_history) > 8: risk_history.pop(0)
-                risk = round(sum(risk_history) / len(risk_history))
-                
-                status = "LOW" if risk < 30 else "MODERATE" if risk < 60 else "HIGH"
-                
-                draw_leg(frame, left_hip, left_knee, left_ankle)
-                draw_leg(frame, right_hip, right_knee, right_ankle)
-                cv2.putText(frame, f"Risk: {risk}%", (20,40), cv2.FONT_HERSHEY_SIMPLEX, 1, (0,0,255), 2)
-                cv2.putText(frame, status, (20,80), cv2.FONT_HERSHEY_SIMPLEX, 1, (0,255,255), 2)
-                
-                st.session_state.logger.add_record(time.time(), left_angle, right_angle, asymmetry, velocity, risk)
-                
-                left_metric.metric("Left Knee", f"{left_angle:.1f}°")
-                right_metric.metric("Right Knee", f"{right_angle:.1f}°")
-                risk_metric.metric("ACL Risk", f"{risk}%")
-                asymmetry_metric.metric("Asymmetry", f"{asymmetry:.1f}%")
-                velocity_metric.metric("Velocity", f"{velocity:.1f}")
-                acceleration_metric.metric("Acceleration", f"{acceleration:.1f}")
-                left_valgus_metric.metric("L Valgus", f"{left_valgus:.1f}")
-                right_valgus_metric.metric("R Valgus", f"{right_valgus:.1f}")
-                
-                st.session_state.history_data.append({
-                    "Left Knee": left_angle,
-                    "Right Knee": right_angle,
-                    "Velocity": velocity,
-                    "Acceleration": acceleration,
-                    "Risk": risk
-                })
-                
-                df_chart = pd.DataFrame(st.session_state.history_data[-100:])
-                if not df_chart.empty and all(col in df_chart.columns for col in ["Left Knee", "Right Knee", "Risk"]):
-                    chart_placeholder.line_chart(df_chart[["Left Knee", "Right Knee", "Risk"]])
-                
-            frame_placeholder.image(cv2.cvtColor(frame, cv2.COLOR_BGR2RGB), channels="RGB", use_container_width=True)
-            
-        cap.release()
-        if tfile is not None:
-            try: os.unlink(tfile.name)
-            except: pass
+            risk_history = []
+            left_angle_history = []
+            right_angle_history = []
+            velocity_history = []
+            acceleration_history = []
+
+            dt = 1.0 / fps
+
+            while cap.isOpened():
+                success, frame = cap.read()
+                if not success:
+                    break
+
+                rgb = cv2.cvtColor(frame, cv2.COLOR_BGR2RGB)
+                results = pose.process(rgb)
+
+                if results.pose_landmarks:
+                    landmarks = results.pose_landmarks.landmark
+                    points = get_pose_points(landmarks, mp_pose)
+
+                    left_hip, left_knee, left_ankle = points["left_hip"], points["left_knee"], points["left_ankle"]
+                    right_hip, right_knee, right_ankle = points["right_hip"], points["right_knee"], points["right_ankle"]
+
+                    left_angle = calculate_angle(left_hip, left_knee, left_ankle)
+                    right_angle = calculate_angle(right_hip, right_knee, right_ankle)
+
+                    left_angle_history.append(left_angle); right_angle_history.append(right_angle)
+                    if len(left_angle_history) > 5: left_angle_history.pop(0); right_angle_history.pop(0)
+                    left_angle = sum(left_angle_history) / len(left_angle_history)
+                    right_angle = sum(right_angle_history) / len(right_angle_history)
+
+                    asymmetry = calculate_asymmetry(left_angle, right_angle)
+                    left_valgus = calculate_knee_valgus(left_hip, left_knee, left_ankle)
+                    right_valgus = calculate_knee_valgus(right_hip, right_knee, right_ankle)
+
+                    if prev_left_angle is not None:
+                        raw_velocity = calculate_velocity(left_angle, prev_left_angle, dt)
+                        raw_acceleration = calculate_acceleration(raw_velocity, prev_velocity, dt)
+                    else:
+                        raw_velocity, raw_acceleration = 0, 0
+
+                    prev_left_angle = left_angle
+                    prev_velocity = raw_velocity
+
+                    velocity_history.append(raw_velocity); acceleration_history.append(raw_acceleration)
+                    if len(velocity_history) > 5: velocity_history.pop(0); acceleration_history.pop(0)
+                    velocity = sum(velocity_history) / len(velocity_history)
+                    acceleration = sum(acceleration_history) / len(acceleration_history)
+
+                    raw_risk = acl_risk_score(left_angle, right_angle, asymmetry, left_valgus, right_valgus, velocity, acceleration, age, gender)
+
+                    avg_angle = (left_angle + right_angle) / 2
+                    if avg_angle > 165 and abs(velocity) < 50:
+                        risk = 0
+                    else:
+                        risk = raw_risk
+
+                    risk_history.append(risk)
+                    if len(risk_history) > 8: risk_history.pop(0)
+                    risk = round(sum(risk_history) / len(risk_history))
+
+                    status = "LOW" if risk < 30 else "MODERATE" if risk < 60 else "HIGH"
+
+                    draw_leg(frame, left_hip, left_knee, left_ankle)
+                    draw_leg(frame, right_hip, right_knee, right_ankle)
+                    cv2.putText(frame, f"Risk: {risk}%", (20, 40), cv2.FONT_HERSHEY_SIMPLEX, 1, (0, 0, 255), 2)
+                    cv2.putText(frame, status, (20, 80), cv2.FONT_HERSHEY_SIMPLEX, 1, (0, 255, 255), 2)
+
+                    st.session_state.logger.add_record(time.time(), left_angle, right_angle, asymmetry, velocity, risk)
+
+                    left_metric.metric("Left Knee", f"{left_angle:.1f}°")
+                    right_metric.metric("Right Knee", f"{right_angle:.1f}°")
+                    risk_metric.metric("ACL Risk", f"{risk}%")
+                    asymmetry_metric.metric("Asymmetry", f"{asymmetry:.1f}%")
+                    velocity_metric.metric("Velocity", f"{velocity:.1f}")
+                    acceleration_metric.metric("Acceleration", f"{acceleration:.1f}")
+                    left_valgus_metric.metric("L Valgus", f"{left_valgus:.1f}")
+                    right_valgus_metric.metric("R Valgus", f"{right_valgus:.1f}")
+
+                    st.session_state.history_data.append({
+                        "Left Knee": left_angle,
+                        "Right Knee": right_angle,
+                        "Velocity": velocity,
+                        "Acceleration": acceleration,
+                        "Risk": risk
+                    })
+
+                    df_chart = pd.DataFrame(st.session_state.history_data[-100:])
+                    if not df_chart.empty and all(col in df_chart.columns for col in ["Left Knee", "Right Knee", "Risk"]):
+                        chart_placeholder.line_chart(df_chart[["Left Knee", "Right Knee", "Risk"]])
+
+                frame_placeholder.image(cv2.cvtColor(frame, cv2.COLOR_BGR2RGB), channels="RGB", use_container_width=True)
+
+            cap.release()
+            if tfile is not None:
+                try: os.unlink(tfile.name)
+                except: pass
