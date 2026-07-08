@@ -3,3 +3,5 @@ opencv-python
 pandas
 streamlit
 fpdf2
+streamlit-webrtc
+av
